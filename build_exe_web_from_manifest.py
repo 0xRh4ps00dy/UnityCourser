@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from datetime import UTC, datetime
 import shutil
 import uuid
@@ -183,7 +184,273 @@ def build_index_sections(source_base: Path, total_items: int) -> str:
     )
 
 
-def build_item_sections(item: dict, index: int, source_name: str) -> str:
+def absolutize_source_html_links(source_html: str) -> str:
+    # Convert root-relative URLs from downloaded Unity Learn pages into absolute URLs.
+    # This avoids file:///C:/_next/... resolution when loaded inside the package iframe.
+    out = source_html
+    for attr in ("href", "src", "poster", "action"):
+        out = re.sub(rf'({attr}=["\"])\/(?!\/)', rf'\1https://learn.unity.com/', out)
+    out = re.sub(r'url\((["\"]?)\/(?!\/)', r'url(\1https://learn.unity.com/', out)
+    return out
+
+
+def render_portable_children(children: list[dict], mark_defs: dict[str, dict]) -> str:
+    rendered: list[str] = []
+    for child in children:
+        text = html.escape(child.get("text", ""))
+        marks = child.get("marks", [])
+        for mark in marks:
+            if mark == "strong":
+                text = f"<strong>{text}</strong>"
+            elif mark == "em":
+                text = f"<em>{text}</em>"
+            elif mark == "underline":
+                text = f"<u>{text}</u>"
+            elif mark in mark_defs:
+                href = mark_defs[mark].get("href", "")
+                if href:
+                    if mark_defs[mark].get("blank"):
+                        text = f'<a href="{html.escape(href)}" target="_blank" rel="noopener">{text}</a>'
+                    else:
+                        text = f'<a href="{html.escape(href)}" target="_self">{text}</a>'
+        rendered.append(text)
+    return "".join(rendered)
+
+
+def extract_next_data_payload(source_html: str) -> dict | None:
+    # More robust than regex for very large one-line HTML files.
+    marker_index = source_html.find("__NEXT_DATA__")
+    if marker_index < 0:
+        return None
+
+    script_start = source_html.rfind("<script", 0, marker_index)
+    if script_start < 0:
+        return None
+
+    json_start = source_html.find(">", script_start)
+    if json_start < 0:
+        return None
+    json_start += 1
+
+    json_end = source_html.find("</script>", json_start)
+    if json_end < 0:
+        return None
+
+    try:
+        return json.loads(source_html[json_start:json_end])
+    except json.JSONDecodeError:
+        return None
+
+
+def render_portable_blocks(blocks: list[dict]) -> list[str]:
+    rendered: list[str] = []
+    list_type: str | None = None
+
+    for block in blocks:
+        block_type = block.get("_type")
+
+        if block_type == "block":
+            mark_defs = {d.get("_key", ""): d for d in block.get("markDefs", [])}
+            content = render_portable_children(block.get("children", []), mark_defs).strip()
+            if not content:
+                continue
+
+            block_list = block.get("listItem")
+            if block_list == "bullet":
+                if list_type != "ul":
+                    if list_type == "ol":
+                        rendered.append("</ol>")
+                    rendered.append("<ul>")
+                    list_type = "ul"
+                rendered.append(f"<li>{content}</li>")
+            elif block_list == "number":
+                if list_type != "ol":
+                    if list_type == "ul":
+                        rendered.append("</ul>")
+                    rendered.append("<ol>")
+                    list_type = "ol"
+                rendered.append(f"<li>{content}</li>")
+            else:
+                if list_type == "ul":
+                    rendered.append("</ul>")
+                    list_type = None
+                elif list_type == "ol":
+                    rendered.append("</ol>")
+                    list_type = None
+                rendered.append(f"<p>{content}</p>")
+
+        elif block_type == "learn-gcpImageBlock":
+            if list_type == "ul":
+                rendered.append("</ul>")
+                list_type = None
+            elif list_type == "ol":
+                rendered.append("</ol>")
+                list_type = None
+            image_url = block.get("image", {}).get("url", "")
+            alt_text = html.escape(block.get("altText", "Imagen"))
+            if image_url:
+                rendered.append(
+                    '<div class="mb-3"><img src="'
+                    + html.escape(image_url)
+                    + '" alt="'
+                    + alt_text
+                    + '" style="max-width:100%;height:auto;border-radius:8px;" loading="lazy"></div>'
+                )
+
+        elif block_type == "learn-gcpVideoBlock":
+            if list_type == "ul":
+                rendered.append("</ul>")
+                list_type = None
+            elif list_type == "ol":
+                rendered.append("</ol>")
+                list_type = None
+            video_url = block.get("overviewVideo", {}).get("url", "")
+            if video_url:
+                rendered.append(
+                    '<p><a href="'
+                    + html.escape(video_url)
+                    + '" target="_blank" rel="noopener">Ver video del paso</a></p>'
+                )
+
+    if list_type == "ul":
+        rendered.append("</ul>")
+    elif list_type == "ol":
+        rendered.append("</ol>")
+
+    return rendered
+
+
+def render_tutorial_sections(next_data: dict) -> str | None:
+    tutorial = next_data.get("props", {}).get("pageProps", {}).get("tutorial", {})
+    sections = tutorial.get("sections", [])
+
+    if not sections:
+        return None
+
+    rendered_sections: list[str] = ['<div class="unity-embedded-content">']
+    for sec_index, section in enumerate(sections, start=1):
+        sec_title = html.escape(section.get("title", f"Seccion {sec_index}"))
+        rendered_sections.append(f'<section class="exe-text mb-4"><h3>{sec_index}. {sec_title}</h3>')
+
+        rendered_sections.extend(render_portable_blocks(section.get("body", [])))
+
+        rendered_sections.append("</section>")
+
+    rendered_sections.append("</div>")
+    return "\n".join(rendered_sections)
+
+
+def render_quiz_sections(next_data: dict) -> str | None:
+    quiz = next_data.get("props", {}).get("pageProps", {}).get("quiz", {})
+    questions = quiz.get("questions", [])
+    if not questions:
+        return None
+
+    rendered: list[str] = ['<div class="unity-embedded-content">']
+
+    description = quiz.get("description", [])
+    if description:
+        rendered.append('<section class="exe-text mb-4"><h3>Descripcion del quiz</h3>')
+        rendered.extend(render_portable_blocks(description))
+        rendered.append("</section>")
+
+    for q_index, question in enumerate(questions, start=1):
+        rendered.append(f'<section class="exe-text mb-4"><h3>Pregunta {q_index}</h3>')
+        rendered.extend(render_portable_blocks(question.get("title", [])))
+        rendered.extend(render_portable_blocks(question.get("body", [])))
+
+        options = question.get("options", [])
+        if options:
+            rendered.append("<ol>")
+            for option in options:
+                rendered.append("<li>")
+                rendered.extend(render_portable_blocks(option.get("body", [])))
+                rendered.append("</li>")
+            rendered.append("</ol>")
+
+        rendered.append("</section>")
+
+    rendered.append("</div>")
+    return "\n".join(rendered)
+
+
+def render_ld_json_fallback(source_html: str) -> str | None:
+    scripts: list[str] = []
+    cursor = 0
+    marker = '<script type="application/ld+json"'
+    while True:
+        start = source_html.find(marker, cursor)
+        if start < 0:
+            break
+        start_data = source_html.find(">", start)
+        if start_data < 0:
+            break
+        start_data += 1
+        end_data = source_html.find("</script>", start_data)
+        if end_data < 0:
+            break
+        scripts.append(source_html[start_data:end_data])
+        cursor = end_data + 9
+
+    for script_data in scripts:
+        try:
+            data = json.loads(script_data)
+        except json.JSONDecodeError:
+            continue
+
+        content_type = str(data.get("contentType", "")).lower()
+        name = html.escape(str(data.get("name", "Contenido")))
+        description = html.escape(str(data.get("description", "")))
+        content = data.get("content", [])
+
+        if not description and not content:
+            continue
+
+        out: list[str] = ['<div class="unity-embedded-content">']
+        out.append(f'<section class="exe-text mb-4"><h3>{name}</h3>')
+        if description:
+            out.append(f"<p>{description}</p>")
+
+        if isinstance(content, list) and content:
+            if content_type == "quiz":
+                for i, q in enumerate(content, start=1):
+                    q_name = q.get("name", "")
+                    if isinstance(q_name, list):
+                        q_name = " ".join(
+                            str(x.get("text", "")) if isinstance(x, dict) else str(x) for x in q_name
+                        )
+                    q_name = html.escape(str(q_name))
+                    if q_name:
+                        out.append(f"<p><strong>Pregunta {i}:</strong> {q_name}</p>")
+            else:
+                out.append("<ol>")
+                for i, entry in enumerate(content, start=1):
+                    title = html.escape(str(entry.get("name", f"Paso {i}")))
+                    out.append(f"<li>{title}</li>")
+                out.append("</ol>")
+
+        out.append("</section>")
+        out.append("</div>")
+        return "\n".join(out)
+
+    return None
+
+
+def render_tutorial_sections_from_source(source_html: str) -> str | None:
+    next_data = extract_next_data_payload(source_html)
+    if next_data:
+        tutorial_html = render_tutorial_sections(next_data)
+        if tutorial_html:
+            return tutorial_html
+
+        quiz_html = render_quiz_sections(next_data)
+        if quiz_html:
+            return quiz_html
+
+    return render_ld_json_fallback(source_html)
+
+
+def build_item_sections(item: dict, index: int, source_name: str, embedded_html: str | None = None) -> str:
     mission = item.get("mission", "")
     summary = item.get("summary", "")
     item_type = item.get("type", "")
@@ -202,15 +469,36 @@ def build_item_sections(item: dict, index: int, source_name: str) -> str:
         f'<p>{html.escape(summary)}</p>',
         '</section>',
         '<section class="exe-text mb-4">',
-        '<h2>Enlaces</h2>',
-        f'<p><a href="{html.escape(url)}" target="_blank" rel="noopener">Abrir original en Unity Learn</a></p>',
-        f'<p><a href="../content/source_html/{source_name}" target="_blank" rel="noopener">Abrir HTML descargado</a></p>',
-        '</section>',
-        '<section class="exe-text mb-4">',
-        '<h2>Recursos detectados</h2>',
-        f'<p>Total: {assets_count} | Disponibles: {assets_ok} | No descargados/fallidos: {assets_fail}</p>',
+        '<h2>Contenido completo de la pagina</h2>',
+        f'<iframe src="../content/source_html/{source_name}" title="Contenido web original {index}" loading="lazy" style="width:100%;min-height:1200px;border:1px solid #d8d8d8;border-radius:8px;background:#fff;"></iframe>',
+        '<p class="mt-2">Si no se visualiza correctamente dentro del marco, abre el enlace directo en la seccion Enlaces.</p>',
         '</section>',
     ]
+
+    if embedded_html:
+        sections.extend(
+            [
+                '<section class="exe-text mb-4">',
+                '<h2>Contenido extraido (respaldo)</h2>',
+                '<p>Si el iframe no carga bien en tu visor, usa este contenido interno del paquete.</p>',
+                embedded_html,
+                '</section>',
+            ]
+        )
+
+    sections.extend(
+        [
+            '<section class="exe-text mb-4">',
+            '<h2>Enlaces</h2>',
+            f'<p><a href="{html.escape(url)}" target="_blank" rel="noopener">Abrir original en Unity Learn</a></p>',
+            f'<p><a href="../content/source_html/{source_name}" target="_blank" rel="noopener">Abrir HTML descargado</a></p>',
+            '</section>',
+            '<section class="exe-text mb-4">',
+            '<h2>Recursos detectados</h2>',
+            f'<p>Total: {assets_count} | Disponibles: {assets_ok} | No descargados/fallidos: {assets_fail}</p>',
+            '</section>',
+        ]
+    )
     return "\n".join(sections)
 
 
@@ -274,6 +562,7 @@ def page_template(
 
 def build_content_xml(
     items: list[dict],
+    embedded_sections: list[str | None],
     package_title: str,
     package_subtitle: str,
     package_description: str,
@@ -373,7 +662,7 @@ def build_content_xml(
         block_id_value = item_block_ids[i - 1]
         component_id = item_component_ids[i - 1]
         source_name = f"source-{i:02d}.html"
-        component_inner_html = build_item_sections(item, i, source_name)
+        component_inner_html = build_item_sections(item, i, source_name, embedded_sections[i - 1])
         component_html = text_idevice_html(component_inner_html)
         json_props = text_idevice_props(component_id, component_inner_html)
         title = html.escape(item.get("title", f"Unidad {i}"))
@@ -476,17 +765,23 @@ def main() -> int:
     )
     (output_dir / "index.html").write_text(index_html, encoding="utf-8")
 
+    embedded_sections: list[str | None] = []
+
     for i, item in enumerate(items, start=1):
         title = item.get("title", f"Unidad {i}")
         output_file = item.get("output_file", "")
         source_name = f"source-{i:02d}.html"
+        embedded_html: str | None = None
 
         if output_file:
             source_file = source_base / output_file
             if source_file.exists():
-                shutil.copy2(source_file, content_source_dir / source_name)
+                source_text = source_file.read_text(encoding="utf-8", errors="ignore")
+                embedded_html = render_tutorial_sections_from_source(source_text)
+                source_text = absolutize_source_html_links(source_text)
+                (content_source_dir / source_name).write_text(source_text, encoding="utf-8")
 
-        content_html = build_item_sections(item, i, source_name)
+        content_html = build_item_sections(item, i, source_name, embedded_html)
 
         prev_href = "../index.html" if i == 1 else f"../html/{page_filename(i - 1)}"
         next_href = None if i == len(items) else f"../html/{page_filename(i + 1)}"
@@ -507,9 +802,11 @@ def main() -> int:
             base_prefix="../",
         )
         (html_dir / page_filename(i)).write_text(page_html, encoding="utf-8")
+        embedded_sections.append(embedded_html)
 
     content_xml = build_content_xml(
         items=items,
+        embedded_sections=embedded_sections,
         package_title=package_title,
         package_subtitle=package_subtitle,
         package_description=package_description,
