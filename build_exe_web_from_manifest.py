@@ -465,11 +465,6 @@ def build_item_sections(item: dict, index: int, source_name: str | None, embedde
     assets_fail = assets_count - assets_ok
 
     sections = []
-    
-    if source_name:
-        sections.append('<section class="exe-text mb-4">')
-        sections.append(f'<iframe src="../content/source_html/{source_name}" title="Contenido web original {index}" loading="lazy" style="width:100%;min-height:1200px;border:1px solid #d8d8d8;border-radius:8px;background:#fff;"></iframe>')
-        sections.append('</section>')
 
     if embedded_html:
         sections.extend(
