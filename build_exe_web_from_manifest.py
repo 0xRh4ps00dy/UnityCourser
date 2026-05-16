@@ -141,13 +141,21 @@ def text_idevice_props(idevice_id: str, inner_html: str) -> dict:
 
 def nav_html(items: list[dict], active_index: int) -> str:
     lines = ["<ul>"]
-    if active_index == 0:
-        lines.append('<li class="active"> <a href="../index.html" class="active main-node no-ch">Inicio</a>')
-    else:
-        lines.append('<li> <a href="../index.html" class="main-node no-ch">Inicio</a>')
-    lines.append("</li>")
+    current_mission = None
 
     for i, item in enumerate(items, start=1):
+        mission = html.escape(item.get("mission", "Sin mision"))
+        if mission != current_mission:
+            if current_mission is not None:
+                lines.append("</ul>")
+                lines.append("</li>")
+            lines.append(
+                '<li class="mission-group">'
+                f'<a href="#" class="mission-heading no-ch" onclick="return false;">{mission}</a>'
+            )
+            lines.append("<ul>")
+            current_mission = mission
+
         file_name = page_filename(i)
         title = html.escape(item.get("title", f"Unidad {i}"))
         href = f"../html/{file_name}"
@@ -155,6 +163,10 @@ def nav_html(items: list[dict], active_index: int) -> str:
             lines.append(f'<li class="active"> <a href="{href}" class="active no-ch">{title}</a>')
         else:
             lines.append(f'<li> <a href="{href}" class="no-ch">{title}</a>')
+        lines.append("</li>")
+
+    if current_mission is not None:
+        lines.append("</ul>")
         lines.append("</li>")
 
     lines.append("</ul>")
@@ -165,13 +177,44 @@ def nav_html_for_index(items: list[dict]) -> str:
     lines = ["<ul>"]
     lines.append('<li class="active"> <a href="index.html" class="active main-node no-ch">Inicio</a>')
     lines.append("</li>")
+
+    current_mission = None
     for i, item in enumerate(items, start=1):
+        mission = html.escape(item.get("mission", "Sin mision"))
+        if mission != current_mission:
+            if current_mission is not None:
+                lines.append("</ul>")
+                lines.append("</li>")
+            lines.append(
+                '<li class="mission-group">'
+                f'<a href="#" class="mission-heading no-ch" onclick="return false;">{mission}</a>'
+            )
+            lines.append("<ul>")
+            current_mission = mission
+
         file_name = page_filename(i)
         title = html.escape(item.get("title", f"Unidad {i}"))
         lines.append(f'<li> <a href="html/{file_name}" class="no-ch">{title}</a>')
         lines.append("</li>")
+
+    if current_mission is not None:
+        lines.append("</ul>")
+        lines.append("</li>")
+
     lines.append("</ul>")
     return "\n".join(lines)
+
+
+def heading_level_from_style(style: str | None) -> int | None:
+    if not style:
+        return None
+
+    normalized = style.strip().lower()
+    if len(normalized) == 2 and normalized.startswith("h") and normalized[1].isdigit():
+        level = int(normalized[1])
+        if 1 <= level <= 6:
+            return level
+    return None
 
 
 def build_index_sections(source_base: Path, total_items: int) -> str:
@@ -256,6 +299,7 @@ def render_portable_blocks(blocks: list[dict]) -> list[str]:
             content = render_portable_children(block.get("children", []), mark_defs).strip()
             if not content:
                 continue
+            heading_level = heading_level_from_style(block.get("style"))
 
             block_list = block.get("listItem")
             if block_list == "bullet":
@@ -279,7 +323,10 @@ def render_portable_blocks(blocks: list[dict]) -> list[str]:
                 elif list_type == "ol":
                     rendered.append("</ol>")
                     list_type = None
-                rendered.append(f"<p>{content}</p>")
+                if heading_level is not None:
+                    rendered.append(f"<h{heading_level}>{content}</h{heading_level}>")
+                else:
+                    rendered.append(f"<p>{content}</p>")
 
         elif block_type == "learn-gcpImageBlock":
             if list_type == "ul":
@@ -331,8 +378,12 @@ def render_tutorial_sections(next_data: dict) -> str | None:
 
     rendered_sections: list[str] = ['<div class="unity-embedded-content">']
     for sec_index, section in enumerate(sections, start=1):
-        sec_title = html.escape(section.get("title", f"Seccion {sec_index}"))
-        rendered_sections.append(f'<section class="exe-text mb-4"><h3>{sec_index}. {sec_title}</h3>')
+        section_title = str(section.get("title", f"Seccion {sec_index}"))
+        if section_title.strip().lower() == "instructions":
+            continue
+
+        sec_title = html.escape(section_title)
+        rendered_sections.append(f'<section class="exe-text mb-4"><h2>{sec_index}. {sec_title}</h2>')
 
         rendered_sections.extend(render_portable_blocks(section.get("body", [])))
 
@@ -352,12 +403,12 @@ def render_quiz_sections(next_data: dict) -> str | None:
 
     description = quiz.get("description", [])
     if description:
-        rendered.append('<section class="exe-text mb-4"><h3>Descripcion del quiz</h3>')
+        rendered.append('<section class="exe-text mb-4"><h2>Descripcion del quiz</h2>')
         rendered.extend(render_portable_blocks(description))
         rendered.append("</section>")
 
     for q_index, question in enumerate(questions, start=1):
-        rendered.append(f'<section class="exe-text mb-4"><h3>Pregunta {q_index}</h3>')
+        rendered.append(f'<section class="exe-text mb-4"><h2>Pregunta {q_index}</h2>')
         rendered.extend(render_portable_blocks(question.get("title", [])))
         rendered.extend(render_portable_blocks(question.get("body", [])))
 
@@ -453,17 +504,6 @@ def render_tutorial_sections_from_source(source_html: str) -> str | None:
 
 
 def build_item_sections(item: dict, index: int, source_name: str | None, embedded_html: str | None = None) -> str:
-    mission = item.get("mission", "")
-    summary = item.get("summary", "")
-    item_type = item.get("type", "")
-    duration = item.get("duration", "")
-    url = item.get("url", "")
-
-    assets = item.get("assets", [])
-    assets_count = len(assets)
-    assets_ok = sum(1 for asset in assets if asset.get("status") in {"downloaded", "skipped", "present"})
-    assets_fail = assets_count - assets_ok
-
     sections = []
 
     if embedded_html:
@@ -475,19 +515,6 @@ def build_item_sections(item: dict, index: int, source_name: str | None, embedde
             ]
         )
 
-    sections.extend(
-        [
-            '<section class="exe-text mb-4">',
-            '<h2>Enlaces</h2>',
-            f'<p><a href="{html.escape(url)}" target="_blank" rel="noopener">Abrir original en Unity Learn</a></p>',
-            f'<p><a href="../content/source_html/{source_name}" target="_blank" rel="noopener">Abrir HTML descargado</a></p>',
-            '</section>',
-            '<section class="exe-text mb-4">',
-            '<h2>Recursos detectados</h2>',
-            f'<p>Total: {assets_count} | Disponibles: {assets_ok} | No descargados/fallidos: {assets_fail}</p>',
-            '</section>',
-        ]
-    )
     return "\n".join(sections)
 
 
@@ -519,7 +546,7 @@ def page_template(
     )
 
     return f"""<!DOCTYPE html>
-<html lang=\"es\" id=\"{html_id}\"> 
+<html lang=\"en\" id=\"{html_id}\"> 
 <head>
 <meta charset=\"utf-8\">
 <meta name=\"generator\" content=\"eXeLearning v4.0.0\">
@@ -558,21 +585,16 @@ def build_content_xml(
     package_author: str,
     package_license: str,
     package_license_url: str,
-    index_page_id: str,
     item_page_ids: list[str],
     modified_ms: int,
-    source_base: Path,
 ) -> str:
     ode_project_id = ode_id("PRJ")
     ode_version_id = ode_id("VER")
-    index_block_id = ode_id("BLK")
-    index_component_id = ode_id("IDEV")
     item_block_ids = [ode_id("BLK") for _ in items]
     item_component_ids = [ode_id("IDEV") for _ in items]
-
-    index_inner_html = build_index_sections(source_base, len(items))
-    index_html_view = text_idevice_html(index_inner_html)
-    index_props = text_idevice_props(index_component_id, index_inner_html)
+    mission_page_ids: dict[str, str] = {}
+    mission_orders: dict[str, int] = {}
+    mission_child_orders: dict[str, int] = {}
 
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -591,7 +613,7 @@ def build_content_xml(
         '  <odeProperty><key>pp_subtitle</key><value>' + html.escape(package_subtitle) + '</value></odeProperty>',
         '  <odeProperty><key>pp_author</key><value>' + html.escape(package_author) + '</value></odeProperty>',
         '  <odeProperty><key>pp_description</key><value>' + html.escape(package_description) + '</value></odeProperty>',
-        '  <odeProperty><key>pp_lang</key><value>es</value></odeProperty>',
+        '  <odeProperty><key>pp_lang</key><value>en</value></odeProperty>',
         '  <odeProperty><key>pp_license</key><value>' + html.escape(package_license.lower()) + '</value></odeProperty>',
         '  <odeProperty><key>pp_licenseUrl</key><value>' + html.escape(package_license_url) + '</value></odeProperty>',
         '  <odeProperty><key>pp_theme</key><value>base</value></odeProperty>',
@@ -606,44 +628,6 @@ def build_content_xml(
         '  <odeProperty><key>pp_globalFont</key><value>default</value></odeProperty>',
         '</odeProperties>',
         '<odeNavStructures>',
-        '  <odeNavStructure>',
-        f'    <odePageId>{index_page_id}</odePageId>',
-        '    <odeParentPageId></odeParentPageId>',
-        '    <pageName>Inicio</pageName>',
-        '    <odeNavStructureOrder>0</odeNavStructureOrder>',
-        '    <odeNavStructureProperties>',
-        '      <odeNavStructureProperty><key>titlePage</key><value>Inicio</value></odeNavStructureProperty>',
-        '    </odeNavStructureProperties>',
-        '    <odePagStructures>',
-        '      <odePagStructure>',
-        f'        <odePageId>{index_page_id}</odePageId>',
-        f'        <odeBlockId>{index_block_id}</odeBlockId>',
-        '        <blockName>Contenido</blockName>',
-        '        <iconName></iconName>',
-        '        <odePagStructureOrder>0</odePagStructureOrder>',
-        '        <odePagStructureProperties>',
-        '          <odePagStructureProperty><key>visibility</key><value>true</value></odePagStructureProperty>',
-        '          <odePagStructureProperty><key>teacherOnly</key><value>false</value></odePagStructureProperty>',
-        '          <odePagStructureProperty><key>allowToggle</key><value>true</value></odePagStructureProperty>',
-        '          <odePagStructureProperty><key>minimized</key><value>false</value></odePagStructureProperty>',
-        '        </odePagStructureProperties>',
-        '        <odeComponents>',
-        '          <odeComponent>',
-        f'            <odePageId>{index_page_id}</odePageId>',
-        f'            <odeBlockId>{index_block_id}</odeBlockId>',
-        f'            <odeIdeviceId>{index_component_id}</odeIdeviceId>',
-        '            <odeIdeviceTypeName>FreeTextIdevice</odeIdeviceTypeName>',
-        f'            <htmlView><![CDATA[{escape_cdata(index_html_view)}]]></htmlView>',
-        f'            <jsonProperties><![CDATA[{escape_cdata(json.dumps(index_props, ensure_ascii=False))}]]></jsonProperties>',
-        '            <odeComponentsOrder>0</odeComponentsOrder>',
-        '            <odeComponentsProperties>',
-        '              <odeComponentsProperty><key>visibility</key><value>true</value></odeComponentsProperty>',
-        '            </odeComponentsProperties>',
-        '          </odeComponent>',
-        '        </odeComponents>',
-        '      </odePagStructure>',
-        '    </odePagStructures>',
-        '  </odeNavStructure>',
     ]
 
     for i, item in enumerate(items, start=1):
@@ -655,13 +639,42 @@ def build_content_xml(
         component_html = text_idevice_html(component_inner_html)
         json_props = text_idevice_props(component_id, component_inner_html)
         title = html.escape(item.get("title", f"Unidad {i}"))
+        mission_raw = item.get("mission", "Sin mision")
+        mission_title = html.escape(mission_raw)
+
+        if mission_raw not in mission_page_ids:
+            mission_page_ids[mission_raw] = ode_id("MNS")
+            mission_orders[mission_raw] = len(mission_orders)
+            mission_child_orders[mission_raw] = 0
+            mission_page_id = mission_page_ids[mission_raw]
+            mission_order = mission_orders[mission_raw]
+            lines.extend(
+                [
+                    '  <odeNavStructure>',
+                    f'    <odePageId>{mission_page_id}</odePageId>',
+                    '    <odeParentPageId></odeParentPageId>',
+                    f'    <pageName>{mission_title}</pageName>',
+                    f'    <odeNavStructureOrder>{mission_order}</odeNavStructureOrder>',
+                    '    <odeNavStructureProperties>',
+                    f'      <odeNavStructureProperty><key>titlePage</key><value>{mission_title}</value></odeNavStructureProperty>',
+                    '    </odeNavStructureProperties>',
+                    '    <odePagStructures>',
+                    '    </odePagStructures>',
+                    '  </odeNavStructure>',
+                ]
+            )
+
+        mission_page_id = mission_page_ids[mission_raw]
+        mission_child_order = mission_child_orders[mission_raw]
+        mission_child_orders[mission_raw] += 1
+
         lines.extend(
             [
                 '  <odeNavStructure>',
                 f'    <odePageId>{page_id_value}</odePageId>',
-                '    <odeParentPageId></odeParentPageId>',
+                f'    <odeParentPageId>{mission_page_id}</odeParentPageId>',
                 f'    <pageName>{title}</pageName>',
-                f'    <odeNavStructureOrder>{i}</odeNavStructureOrder>',
+                f'    <odeNavStructureOrder>{mission_child_order}</odeNavStructureOrder>',
                 '    <odeNavStructureProperties>',
                 f'      <odeNavStructureProperty><key>titlePage</key><value>{title}</value></odeNavStructureProperty>',
                 '    </odeNavStructureProperties>',
@@ -719,7 +732,6 @@ def main() -> int:
     package_license = metadata.get("License", DEFAULT_LICENSE)
     package_license_url = metadata.get("LicenseUrl", DEFAULT_LICENSE_URL)
     modified_ms = int(datetime.now(UTC).timestamp() * 1000)
-    index_anchor_id = exe_page_id(0)
     item_anchor_ids = [exe_page_id(i) for i in range(1, len(items) + 1)]
 
     if output_dir.exists():
@@ -729,30 +741,17 @@ def main() -> int:
 
     html_dir = output_dir / "html"
     content_source_dir = output_dir / "content" / "source_html"
+    index_file = output_dir / "index.html"
     html_dir.mkdir(parents=True, exist_ok=True)
     content_source_dir.mkdir(parents=True, exist_ok=True)
+
+    if index_file.exists():
+        index_file.unlink()
 
     for existing in html_dir.glob("*.html"):
         existing.unlink()
 
     source_base = manifest_path.parent
-    index_content = build_index_sections(source_base, len(items))
-    index_html = page_template(
-        package_title=package_title,
-        package_subtitle=package_subtitle,
-        package_description=package_description,
-        package_license=package_license,
-        package_license_url=package_license_url,
-        page_title="Inicio",
-        nav_block=nav_html_for_index(items),
-        content_html=index_content,
-        prev_href=None,
-        next_href=(f"html/{page_filename(1)}" if items else None),
-        page_anchor=index_anchor_id,
-        html_id="exe-index",
-        base_prefix="",
-    )
-    (output_dir / "index.html").write_text(index_html, encoding="utf-8")
 
     embedded_sections: list[str | None] = []
 
@@ -773,7 +772,7 @@ def main() -> int:
 
         content_html = build_item_sections(item, i, source_name, embedded_html)
 
-        prev_href = "../index.html" if i == 1 else f"../html/{page_filename(i - 1)}"
+        prev_href = None if i == 1 else f"../html/{page_filename(i - 1)}"
         next_href = None if i == len(items) else f"../html/{page_filename(i + 1)}"
 
         page_html = page_template(
@@ -803,10 +802,8 @@ def main() -> int:
         package_author=package_author,
         package_license=package_license,
         package_license_url=package_license_url,
-        index_page_id=index_anchor_id,
         item_page_ids=item_anchor_ids,
         modified_ms=modified_ms,
-        source_base=source_base,
     )
     (output_dir / "content.xml").write_text(content_xml, encoding="utf-8")
     (output_dir / "content.dtd").write_text(ODE_DTD_CONTENT, encoding="utf-8")
@@ -818,7 +815,7 @@ def main() -> int:
             shutil.copytree(source_assets, target_assets, dirs_exist_ok=True)
 
     print(f"Paquete generado en: {output_dir}")
-    print(f"Paginas creadas: {len(items) + 1}")
+    print(f"Paginas creadas: {len(items)}")
     print(f"HTML fuente copiados: {len(list(content_source_dir.glob('*.html')))}")
     
     # Compress the output directory
