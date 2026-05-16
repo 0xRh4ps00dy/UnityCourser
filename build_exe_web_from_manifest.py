@@ -4,10 +4,12 @@ import argparse
 import html
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import shutil
 import uuid
 from pathlib import Path
+
+UTC = timezone.utc
 
 
 DEFAULT_LICENSE = "Creative Commons: Reconocimiento - compartir igual 4.0"
@@ -450,7 +452,7 @@ def render_tutorial_sections_from_source(source_html: str) -> str | None:
     return render_ld_json_fallback(source_html)
 
 
-def build_item_sections(item: dict, index: int, source_name: str, embedded_html: str | None = None) -> str:
+def build_item_sections(item: dict, index: int, source_name: str | None, embedded_html: str | None = None) -> str:
     mission = item.get("mission", "")
     summary = item.get("summary", "")
     item_type = item.get("type", "")
@@ -462,25 +464,17 @@ def build_item_sections(item: dict, index: int, source_name: str, embedded_html:
     assets_ok = sum(1 for asset in assets if asset.get("status") in {"downloaded", "skipped", "present"})
     assets_fail = assets_count - assets_ok
 
-    sections = [
-        '<section class="exe-text mb-4">',
-        f'<p><strong>Mision:</strong> {html.escape(mission)}</p>',
-        f'<p><strong>Tipo:</strong> {html.escape(item_type)} | <strong>Duracion:</strong> {html.escape(duration)}</p>',
-        f'<p>{html.escape(summary)}</p>',
-        '</section>',
-        '<section class="exe-text mb-4">',
-        '<h2>Contenido completo de la pagina</h2>',
-        f'<iframe src="../content/source_html/{source_name}" title="Contenido web original {index}" loading="lazy" style="width:100%;min-height:1200px;border:1px solid #d8d8d8;border-radius:8px;background:#fff;"></iframe>',
-        '<p class="mt-2">Si no se visualiza correctamente dentro del marco, abre el enlace directo en la seccion Enlaces.</p>',
-        '</section>',
-    ]
+    sections = []
+    
+    if source_name:
+        sections.append('<section class="exe-text mb-4">')
+        sections.append(f'<iframe src="../content/source_html/{source_name}" title="Contenido web original {index}" loading="lazy" style="width:100%;min-height:1200px;border:1px solid #d8d8d8;border-radius:8px;background:#fff;"></iframe>')
+        sections.append('</section>')
 
     if embedded_html:
         sections.extend(
             [
                 '<section class="exe-text mb-4">',
-                '<h2>Contenido extraido (respaldo)</h2>',
-                '<p>Si el iframe no carga bien en tu visor, usa este contenido interno del paquete.</p>',
                 embedded_html,
                 '</section>',
             ]
@@ -770,8 +764,8 @@ def main() -> int:
     for i, item in enumerate(items, start=1):
         title = item.get("title", f"Unidad {i}")
         output_file = item.get("output_file", "")
-        source_name = f"source-{i:02d}.html"
         embedded_html: str | None = None
+        source_name: str | None = None
 
         if output_file:
             source_file = source_base / output_file
@@ -779,6 +773,7 @@ def main() -> int:
                 source_text = source_file.read_text(encoding="utf-8", errors="ignore")
                 embedded_html = render_tutorial_sections_from_source(source_text)
                 source_text = absolutize_source_html_links(source_text)
+                source_name = f"source-{i:02d}.html"
                 (content_source_dir / source_name).write_text(source_text, encoding="utf-8")
 
         content_html = build_item_sections(item, i, source_name, embedded_html)
@@ -830,6 +825,14 @@ def main() -> int:
     print(f"Paquete generado en: {output_dir}")
     print(f"Paginas creadas: {len(items) + 1}")
     print(f"HTML fuente copiados: {len(list(content_source_dir.glob('*.html')))}")
+    
+    # Compress the output directory
+    zip_path = output_dir.parent / f"{output_dir.name}.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+    shutil.make_archive(str(output_dir), 'zip', output_dir.parent, output_dir.name)
+    print(f"Archivo comprimido: {zip_path}")
+    
     return 0
 
 
