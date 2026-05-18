@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--template-dir",
-        default="test_web",
+        default="",
         help="Directorio plantilla con estructura base de eXe (libs, theme, css).",
     )
     parser.add_argument(
@@ -92,6 +92,29 @@ def parse_args() -> argparse.Namespace:
         "--copy-assets",
         action="store_true",
         help="Copia tambien downloads/unity_essentials/assets dentro del paquete.",
+    )
+    parser.add_argument(
+        "--bold-mode",
+        choices=["strip", "keep"],
+        default="strip",
+        help=(
+            "Gestion de negritas en el contenido generado: "
+            "strip (por defecto, elimina), keep (mantiene)."
+        ),
+    )
+    parser.add_argument(
+        "--keep-bold",
+        action="store_const",
+        const="keep",
+        dest="bold_mode",
+        help="Atajo para --bold-mode keep.",
+    )
+    parser.add_argument(
+        "--strip-bold",
+        action="store_const",
+        const="strip",
+        dest="bold_mode",
+        help="Atajo para --bold-mode strip.",
     )
     return parser.parse_args()
 
@@ -237,6 +260,14 @@ def absolutize_source_html_links(source_html: str) -> str:
         out = re.sub(rf'({attr}=["\"])\/(?!\/)', rf'\1https://learn.unity.com/', out)
     out = re.sub(r'url\((["\"]?)\/(?!\/)', r'url(\1https://learn.unity.com/', out)
     return out
+
+
+def process_bold_markup(html_text: str, mode: str) -> str:
+    # Control bold tags for translation quality.
+    if mode == "keep":
+        return html_text
+    # Default: strip bold tags
+    return re.sub(r"</?(?:strong|b)\b[^>]*>", "", html_text, flags=re.IGNORECASE)
 
 
 def render_portable_children(children: list[dict], mark_defs: dict[str, dict]) -> str:
@@ -587,6 +618,7 @@ def build_content_xml(
     package_license_url: str,
     item_page_ids: list[str],
     modified_ms: int,
+    bold_mode: str,
 ) -> str:
     ode_project_id = ode_id("PRJ")
     ode_version_id = ode_id("VER")
@@ -636,6 +668,7 @@ def build_content_xml(
         component_id = item_component_ids[i - 1]
         source_name = f"source-{i:02d}.html"
         component_inner_html = build_item_sections(item, i, source_name, embedded_sections[i - 1])
+        component_inner_html = process_bold_markup(component_inner_html, bold_mode)
         component_html = text_idevice_html(component_inner_html)
         json_props = text_idevice_props(component_id, component_inner_html)
         title = html.escape(item.get("title", f"Unidad {i}"))
@@ -715,13 +748,189 @@ def build_content_xml(
     return "\n".join(lines)
 
 
+def ensure_template(template_dir: Path) -> None:
+    """Crea la estructura mínima de template si no existe."""
+    
+    # Crear directorio base si no existe
+    template_dir.mkdir(parents=True, exist_ok=True)
+    
+    # libs/common.js
+    (template_dir / "libs").mkdir(exist_ok=True)
+    (template_dir / "libs" / "common.js").write_text(
+        "// Common utilities\n(function() {\n  console.log('Common JS loaded');\n})();\n"
+    )
+    
+    # libs/common_i18n.js
+    (template_dir / "libs" / "common_i18n.js").write_text(
+        "// Internationalization utilities\n(function() {\n  console.log('i18n JS loaded');\n})();\n"
+    )
+    
+    # libs/exe_export.js
+    (template_dir / "libs" / "exe_export.js").write_text(
+        "// eXe export utilities\n(function() {\n  console.log('eXe export JS loaded');\n})();\n"
+    )
+    
+    # libs/bootstrap (mínimo)
+    (template_dir / "libs" / "bootstrap").mkdir(exist_ok=True)
+    (template_dir / "libs" / "bootstrap" / ".gitkeep").write_text("")
+    
+    # libs/jquery (mínimo)
+    (template_dir / "libs" / "jquery").mkdir(exist_ok=True)
+    (template_dir / "libs" / "jquery" / ".gitkeep").write_text("")
+    
+    # theme/style.css
+    (template_dir / "theme").mkdir(exist_ok=True)
+    (template_dir / "theme" / "style.css").write_text(
+        """/* eXe Theme Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  line-height: 1.6;
+  color: #333;
+  background-color: #f5f5f5;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  background-color: #2c3e50;
+  color: white;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+main {
+  background-color: white;
+  padding: 20px;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #2c3e50;
+  margin-bottom: 10px;
+}
+
+p {
+  margin-bottom: 15px;
+}
+
+nav ul {
+  list-style: none;
+}
+
+nav ul li {
+  padding: 8px 0;
+}
+
+nav ul li a {
+  color: #3498db;
+  text-decoration: none;
+}
+
+nav ul li a:hover {
+  text-decoration: underline;
+}
+"""
+    )
+    
+    # theme/style.js
+    (template_dir / "theme" / "style.js").write_text(
+        """// eXe Theme JavaScript
+(function() {
+  'use strict';
+  
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log('eXe theme loaded');
+  });
+})();
+"""
+    )
+    
+    # content/css/base.css
+    (template_dir / "content" / "css").mkdir(parents=True, exist_ok=True)
+    (template_dir / "content" / "css" / "base.css").write_text(
+        """/* Base content styles */
+.exe-text {
+  margin-bottom: 20px;
+}
+
+.exe-section {
+  margin-bottom: 20px;
+  padding: 15px;
+  border-left: 4px solid #3498db;
+  background-color: #f9f9f9;
+}
+
+.exe-section h2 {
+  margin-top: 0;
+}
+
+.exe-section p {
+  margin-bottom: 10px;
+}
+
+strong {
+  font-weight: bold;
+}
+
+em {
+  font-style: italic;
+}
+
+u {
+  text-decoration: underline;
+}
+
+.mb-4 {
+  margin-bottom: 20px;
+}
+"""
+    )
+    
+    # content/source_html (para archivos fuente)
+    (template_dir / "content" / "source_html").mkdir(parents=True, exist_ok=True)
+    (template_dir / "content" / "source_html" / ".gitkeep").write_text("")
+    
+    # html (para páginas generadas)
+    (template_dir / "html").mkdir(parents=True, exist_ok=True)
+    (template_dir / "html" / ".gitkeep").write_text("")
+
+
 def main() -> int:
     args = parse_args()
     manifest_path = Path(args.manifest).resolve()
-    template_dir = Path(args.template_dir).resolve()
+
+    if args.template_dir:
+        template_dir = Path(args.template_dir).resolve()
+    else:
+        candidates = [
+            Path("exe_unity_web"),
+            Path("test_web"),
+        ]
+        template_dir = None
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_dir():
+                template_dir = candidate.resolve()
+                break
+        
+        # Si no existe ninguna, usar exe_unity_web y crearla después
+        if template_dir is None:
+            template_dir = Path("exe_unity_web").resolve()
+
     output_dir = Path(args.output_dir).resolve()
 
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
     items = data.get("items", [])
     metadata = data.get("metadata", {})
 
@@ -734,10 +943,17 @@ def main() -> int:
     modified_ms = int(datetime.now(UTC).timestamp() * 1000)
     item_anchor_ids = [exe_page_id(i) for i in range(1, len(items) + 1)]
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-
-    shutil.copytree(template_dir, output_dir)
+    # Si template_dir y output_dir son iguales (template auto-generada), 
+    # generar estructura en output_dir
+    if template_dir.resolve() == output_dir.resolve():
+        # Template será generada in-place
+        print(f"Template no encontrada. Creando estructura base en: {output_dir}")
+        ensure_template(output_dir)
+    else:
+        # Copiar template existente a output
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        shutil.copytree(template_dir, output_dir)
 
     html_dir = output_dir / "html"
     content_source_dir = output_dir / "content" / "source_html"
@@ -766,11 +982,15 @@ def main() -> int:
             if source_file.exists():
                 source_text = source_file.read_text(encoding="utf-8", errors="ignore")
                 embedded_html = render_tutorial_sections_from_source(source_text)
+                if embedded_html:
+                    embedded_html = process_bold_markup(embedded_html, args.bold_mode)
                 source_text = absolutize_source_html_links(source_text)
+                source_text = process_bold_markup(source_text, args.bold_mode)
                 source_name = f"source-{i:02d}.html"
                 (content_source_dir / source_name).write_text(source_text, encoding="utf-8")
 
         content_html = build_item_sections(item, i, source_name, embedded_html)
+        content_html = process_bold_markup(content_html, args.bold_mode)
 
         prev_href = None if i == 1 else f"../html/{page_filename(i - 1)}"
         next_href = None if i == len(items) else f"../html/{page_filename(i + 1)}"
@@ -804,6 +1024,7 @@ def main() -> int:
         package_license_url=package_license_url,
         item_page_ids=item_anchor_ids,
         modified_ms=modified_ms,
+        bold_mode=args.bold_mode,
     )
     (output_dir / "content.xml").write_text(content_xml, encoding="utf-8")
     (output_dir / "content.dtd").write_text(ODE_DTD_CONTENT, encoding="utf-8")

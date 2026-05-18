@@ -1,150 +1,122 @@
 # UnityCourser
 
-Automatiza la descarga de contenido de Unity Learn desde CSV y genera un paquete web compatible con eXeLearning (incluyendo ZIP final para importar).
+Automatiza la descarga y generación de paquetes eXe-compatible desde contenido de Unity Learn.
 
-## Que hace este proyecto
+## ¿Qué hace?
 
-- Lee un CSV de curso exportado (titulo, URL, tipo, duracion, resumen).
-- Descarga las paginas HTML del curso y las organiza por mision.
-- Detecta y refresca recursos (assets) en el `manifest.json`.
-- Genera un paquete estilo eXe en una carpeta de salida.
-- Crea automaticamente un archivo `.zip` listo para probar/importar.
+1. **Descarga** HTML del curso desde un CSV de contenido
+2. **Refresca** referencias a assets en el manifest.json
+3. **Genera** paquete web estilo eXe listo para importar
 
-## Scripts principales
+## Estructura del Proyecto
 
-- `download_unity_learn.py`: descarga HTML del curso desde CSV y opcionalmente assets.
-- `refresh_manifest_assets.py`: reconstruye el bloque `assets` del manifest segun archivos locales.
-- `build_exe_web_from_manifest.py`: genera el paquete web eXe y el ZIP final.
-
-Nota: El bloque de `iframe` de "Contenido web original" fue eliminado del generador para evitar cuadros negros con `not found`.
+```
+UnityCourser/
+├── scripts/                          # Scripts principales
+│   ├── download_unity_learn.py      # Descarga HTML del curso
+│   ├── refresh_manifest_assets.py   # Actualiza manifest.json
+│   └── build_exe_web_from_manifest.py # Genera paquete eXe
+├── data/                             # CSVs de entrada
+├── downloads/                        # Contenido descargado (por curso)
+├── elpx/                             # Paquetes ELPX generados
+├── output/                           # Paquetes eXe generados
+├── docs/                             # Documentación adicional
+├── build_course.sh                   # Script orquestador (recomendado)
+└── README.md
+```
 
 ## Requisitos
 
-- Linux/macOS/Windows con Python 3.10+
-- Entorno virtual en `.venv`
+- Python 3.10+
+- Entorno virtual (`.venv`)
 
-Si ya tienes `.venv`, usa siempre el interprete del entorno:
+## Inicio Rápido
+
+### Opción A: Script Orquestador (Recomendado)
 
 ```bash
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials
 ```
 
-## Flujo completo (un curso)
+Ejecuta los 3 pasos automáticamente. El slug se puede omitir (se genera del nombre del CSV).
 
-Ejemplo usando:
+### Opción B: Pasos Individuales
 
-- CSV: `UL_Unity_Essentials_6_0.csv`
-- slug del curso: `unity_essentials`
-
-### 1) Descargar HTML (y assets opcionalmente)
+#### 1) Descargar contenido
 
 ```bash
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python download_unity_learn.py UL_Unity_Essentials_6_0.csv \
+.venv/bin/python scripts/download_unity_learn.py data/UL_Unity_Essentials_6_0.csv \
   --output-dir downloads/unity_essentials \
   --download-assets
 ```
 
-Opciones utiles:
-
-- `--limit 10`: baja solo los primeros 10 items.
-- `--delay 1.5`: pausa entre descargas.
-- `--timeout 45`: timeout por request.
-- `--overwrite`: reemplaza HTML existentes.
-
-### 2) Refrescar manifest de assets
+#### 2) Refrescar manifest
 
 ```bash
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python refresh_manifest_assets.py \
+.venv/bin/python scripts/refresh_manifest_assets.py \
   --manifest downloads/unity_essentials/manifest.json \
   --base-dir downloads/unity_essentials
 ```
 
-### 3) Generar paquete eXe y ZIP
+#### 3) Generar paquete
 
 ```bash
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python build_exe_web_from_manifest.py \
+.venv/bin/python scripts/build_exe_web_from_manifest.py \
   --manifest downloads/unity_essentials/manifest.json \
-  --output-dir exe_unity_web
+  --output-dir output/exe_unity_essentials
 ```
 
-Salida esperada:
+## Opciones del Build
 
-- Carpeta del paquete: `exe_unity_web/`
-- ZIP final: `exe_unity_web.zip`
-
-## Repetir con otros cursos (otros CSV)
-
-Para escalar a multiples cursos, usa un slug distinto por curso y no mezcles salidas.
-
-Ejemplo para otro CSV:
+### Mantener negritas (por defecto se eliminan)
 
 ```bash
-# 1) Descargar
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python download_unity_learn.py MI_OTRO_CURSO.csv \
-  --output-dir downloads/mi_otro_curso \
-  --download-assets
-
-# 2) Refrescar manifest
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python refresh_manifest_assets.py \
-  --manifest downloads/mi_otro_curso/manifest.json \
-  --base-dir downloads/mi_otro_curso
-
-# 3) Build paquete + zip
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python build_exe_web_from_manifest.py \
-  --manifest downloads/mi_otro_curso/manifest.json \
-  --output-dir exe_mi_otro_curso
-```
-
-Resultado de ese curso:
-
-- `exe_mi_otro_curso/`
-- `exe_mi_otro_curso.zip`
-
-## Estructura recomendada para multiples cursos
-
-```text
-UnityCourser/
-  downloads/
-    unity_essentials/
-    mi_otro_curso/
-  exe_unity_web/
-  exe_unity_web.zip
-  exe_mi_otro_curso/
-  exe_mi_otro_curso.zip
-```
-
-## Comandos rapidos
-
-Regenerar solo el ZIP de un curso ya descargado:
-
-```bash
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python build_exe_web_from_manifest.py \
+.venv/bin/python scripts/build_exe_web_from_manifest.py \
   --manifest downloads/unity_essentials/manifest.json \
-  --output-dir exe_unity_web
+  --output-dir output/exe_unity_web \
+  --keep-bold
 ```
 
-## Solucion de problemas
-
-- Si faltan recursos en salida:
-  - Ejecuta `refresh_manifest_assets.py` antes del build.
-- Si cambiaste el generador:
-  - Ejecuta de nuevo `build_exe_web_from_manifest.py` para regenerar HTML y ZIP.
-- Si quieres conservar assets dentro del paquete eXe:
-  - Usa `--copy-assets` al generar el build.
-
-Ejemplo:
+### Copiar assets dentro del paquete
 
 ```bash
-/media/rh4ps00dy/Data/UnityCourser/.venv/bin/python build_exe_web_from_manifest.py \
-  --manifest downloads/unity_essentials/manifest.json \
-  --output-dir exe_unity_web \
-  --copy-assets
+--copy-assets
 ```
 
-## Siguiente mejora sugerida
+## Opciones de Descarga
 
-Crear un script orquestador (por ejemplo `build_course.sh`) para ejecutar los 3 pasos con un solo comando:
+- `--limit 10` - Descargar solo primeros 10 items
+- `--delay 1.5` - Pausa entre descargas (segundos)
+- `--timeout 45` - Timeout por request
+- `--overwrite` - Reemplazar HTML existentes
+
+## Nota sobre Negritas
+
+- **Por defecto**: se eliminan `<strong>` y `<b>` (mejora traducción automática)
+- **Con `--keep-bold`**: se mantienen intactas
+- La template se genera automáticamente si no existe
+
+## Múltiples Cursos
+
+Con el script orquestador es muy simple:
 
 ```bash
-./build_course.sh UL_Unity_Essentials_6_0.csv unity_essentials
+./build_course.sh data/CURSO_1.csv curso_1
+./build_course.sh data/CURSO_2.csv curso_2
 ```
+
+Cada curso genera:
+- `downloads/curso_1/` - Contenido descargado
+- `output/exe_curso_1/` - Paquete eXe
+- `output/exe_curso_1.zip` - ZIP comprimido
+
+## Troubleshooting
+
+| Problema | Solución |
+|----------|----------|
+| Faltan recursos | Ejecuta `refresh_manifest_assets.py` antes del build |
+| Caracteres especiales | Asegúrate que CSV esté en UTF-8 |
+
+## Licencia
+
+Creative Commons: Reconocimiento - compartir igual 4.0
