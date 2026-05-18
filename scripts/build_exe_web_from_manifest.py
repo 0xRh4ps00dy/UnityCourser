@@ -458,6 +458,160 @@ def render_quiz_sections(next_data: dict) -> str | None:
     return "\n".join(rendered)
 
 
+def extract_quiz_questions(next_data: dict) -> list[dict] | None:
+    """Extract questions with options and isCorrect flags from quiz __NEXT_DATA__."""
+    quiz = next_data.get("props", {}).get("pageProps", {}).get("quiz", {})
+    questions = quiz.get("questions", [])
+    if not questions:
+        return None
+
+    result: list[dict] = []
+    for q in questions:
+        title_html = "\n".join(render_portable_blocks(q.get("title", [])))
+        options = q.get("options", [])
+        correct_count = sum(1 for o in options if o.get("isCorrect", False))
+        parsed_options = [
+            {
+                "html": "\n".join(render_portable_blocks(o.get("body", []))),
+                "isCorrect": bool(o.get("isCorrect", False)),
+            }
+            for o in options
+        ]
+        result.append(
+            {
+                "title_html": title_html,
+                "options": parsed_options,
+                "is_multiple": correct_count > 1,
+            }
+        )
+    return result or None
+
+
+def render_interactive_quiz_html(questions: list[dict]) -> str:
+    """Generate a self-contained interactive quiz (radio/checkbox + JS checking)."""
+    quiz_id = "quiz-" + uuid.uuid4().hex[:8]
+
+    questions_html_parts: list[str] = []
+    for q_idx, q in enumerate(questions):
+        input_type = "checkbox" if q["is_multiple"] else "radio"
+        hint = "Select all correct answers." if q["is_multiple"] else "Select one answer."
+        correct_indices = [i for i, o in enumerate(q["options"]) if o["isCorrect"]]
+
+        options_html = "\n".join(
+            f'<label class="exe-quiz-opt">'
+            f'<input type="{input_type}" name="{quiz_id}-q{q_idx}" value="{o_idx}">'
+            f'<span class="exe-quiz-opt-text">{opt["html"]}</span>'
+            f"</label>"
+            for o_idx, opt in enumerate(q["options"])
+        )
+
+        questions_html_parts.append(
+            f'<div class="exe-quiz-q" data-correct=\'{json.dumps(correct_indices)}\''
+            f' data-multiple="{str(q["is_multiple"]).lower()}">'
+            f'<div class="exe-quiz-q-title">{q["title_html"]}</div>'
+            f'<p class="exe-quiz-hint"><em>{html.escape(hint)}</em></p>'
+            f'<div class="exe-quiz-opts">{options_html}</div>'
+            f'<div class="exe-quiz-fb" style="display:none"></div>'
+            f"</div>"
+        )
+
+    questions_block = "\n".join(questions_html_parts)
+
+    css = """
+<style>
+.exe-interactive-quiz{margin:1em 0;font-family:inherit}
+.exe-quiz-q{margin-bottom:1.4em;padding:1em 1.2em;border:1px solid #ddd;border-radius:6px;background:#fafafa}
+.exe-quiz-q-title{font-weight:bold;margin-bottom:.4em}
+.exe-quiz-hint{color:#666;font-size:.9em;margin:.2em 0 .6em}
+.exe-quiz-opts{display:flex;flex-direction:column;gap:.4em}
+.exe-quiz-opt{display:flex;align-items:flex-start;gap:.5em;cursor:pointer;padding:.3em .5em;border-radius:4px;border:1px solid transparent}
+.exe-quiz-opt:hover{background:#f0f0f0}
+.exe-quiz-opt input{margin-top:.2em;flex-shrink:0}
+.exe-quiz-opt.correct{background:#d4edda;border-color:#28a745}
+.exe-quiz-opt.incorrect{background:#f8d7da;border-color:#dc3545}
+.exe-quiz-opt.missed{background:#fff3cd;border-color:#ffc107}
+.exe-quiz-fb{margin-top:.6em;padding:.35em .8em;border-radius:4px;font-weight:bold}
+.exe-quiz-fb.ok{background:#d4edda;color:#155724}
+.exe-quiz-fb.ko{background:#f8d7da;color:#721c24}
+.exe-quiz-controls{margin-top:.8em;display:flex;gap:.6em;flex-wrap:wrap}
+.exe-quiz-btn{padding:.45em 1.4em;border:none;border-radius:4px;font-size:1em;cursor:pointer}
+.exe-quiz-check{background:#007bff;color:#fff}.exe-quiz-check:hover{background:#0056b3}
+.exe-quiz-reset{background:#6c757d;color:#fff;display:none}.exe-quiz-reset:hover{background:#545b62}
+.exe-quiz-score{margin-top:.8em;padding:.7em 1em;border-radius:6px;font-size:1.05em;font-weight:bold;display:none}
+.exe-quiz-score.passed{background:#d4edda;color:#155724}
+.exe-quiz-score.failed{background:#f8d7da;color:#721c24}
+</style>"""
+
+    js = f"""
+<script>
+(function(){{
+  var root=document.getElementById('{quiz_id}');
+  if(!root)return;
+  root.querySelector('.exe-quiz-check').addEventListener('click',function(){{
+    var qs=root.querySelectorAll('.exe-quiz-q');
+    var total=qs.length,correct=0;
+    qs.forEach(function(qEl){{
+      var correctData=JSON.parse(qEl.dataset.correct);
+      var selected=[];
+      qEl.querySelectorAll('input:checked').forEach(function(inp){{selected.push(parseInt(inp.value));}});
+      qEl.querySelectorAll('.exe-quiz-opt').forEach(function(lbl,idx){{
+        lbl.classList.remove('correct','incorrect','missed');
+        var sel=selected.includes(idx),ok=correctData.includes(idx);
+        if(sel&&ok)lbl.classList.add('correct');
+        else if(sel&&!ok)lbl.classList.add('incorrect');
+        else if(!sel&&ok)lbl.classList.add('missed');
+      }});
+      var ss=selected.slice().sort(function(a,b){{return a-b;}});
+      var sc=correctData.slice().sort(function(a,b){{return a-b;}});
+      var isRight=JSON.stringify(ss)===JSON.stringify(sc);
+      if(isRight)correct++;
+      var fb=qEl.querySelector('.exe-quiz-fb');
+      fb.style.display='block';
+      fb.className='exe-quiz-fb '+(isRight?'ok':'ko');
+      fb.textContent=isRight?'\u2713 Correct':'\u2717 Incorrect \u2014 highlighted in yellow: missed correct answer(s)';
+    }});
+    var sc=root.querySelector('.exe-quiz-score');
+    sc.style.display='block';
+    sc.className='exe-quiz-score '+(correct===total?'passed':'failed');
+    sc.textContent='Score: '+correct+' / '+total+(correct===total?' \u2014 Perfect!':'');
+    root.querySelector('.exe-quiz-check').style.display='none';
+    root.querySelector('.exe-quiz-reset').style.display='inline-block';
+  }});
+  root.querySelector('.exe-quiz-reset').addEventListener('click',function(){{
+    root.querySelectorAll('input').forEach(function(i){{i.checked=false;}});
+    root.querySelectorAll('.exe-quiz-opt').forEach(function(l){{l.classList.remove('correct','incorrect','missed');}});
+    root.querySelectorAll('.exe-quiz-fb').forEach(function(f){{f.style.display='none';}});
+    root.querySelector('.exe-quiz-score').style.display='none';
+    root.querySelector('.exe-quiz-check').style.display='inline-block';
+    this.style.display='none';
+  }});
+}})();
+</script>"""
+
+    return (
+        f'{css}\n'
+        f'<div class="exe-interactive-quiz" id="{quiz_id}">\n'
+        f'{questions_block}\n'
+        f'<div class="exe-quiz-controls">'
+        f'<button type="button" class="exe-quiz-btn exe-quiz-check">Check answers</button>'
+        f'<button type="button" class="exe-quiz-btn exe-quiz-reset">Try again</button>'
+        f'</div>'
+        f'<div class="exe-quiz-score"></div>'
+        f'\n</div>\n'
+        f'{js}'
+    )
+
+
+def render_interactive_quiz_from_source(source_html: str) -> str | None:
+    """Return interactive quiz HTML for a quiz page, or None if no quiz data found."""
+    next_data = extract_next_data_payload(source_html)
+    if next_data:
+        questions = extract_quiz_questions(next_data)
+        if questions:
+            return render_interactive_quiz_html(questions)
+    return None
+
+
 def render_ld_json_fallback(source_html: str) -> str | None:
     scripts: list[str] = []
     cursor = 0
@@ -981,9 +1135,19 @@ def main() -> int:
             source_file = source_base / output_file
             if source_file.exists():
                 source_text = source_file.read_text(encoding="utf-8", errors="ignore")
-                embedded_html = render_tutorial_sections_from_source(source_text)
-                if embedded_html:
-                    embedded_html = process_bold_markup(embedded_html, args.bold_mode)
+                item_type = item.get("type", "")
+                if item_type == "Quiz":
+                    # Render as interactive quiz activity (radio/checkbox + JS)
+                    embedded_html = render_interactive_quiz_from_source(source_text)
+                    if embedded_html is None:
+                        # Fallback to plain quiz rendering if extraction failed
+                        embedded_html = render_tutorial_sections_from_source(source_text)
+                    if embedded_html:
+                        embedded_html = process_bold_markup(embedded_html, args.bold_mode)
+                else:
+                    embedded_html = render_tutorial_sections_from_source(source_text)
+                    if embedded_html:
+                        embedded_html = process_bold_markup(embedded_html, args.bold_mode)
                 source_text = absolutize_source_html_links(source_text)
                 source_text = process_bold_markup(source_text, args.bold_mode)
                 source_name = f"source-{i:02d}.html"
