@@ -20,7 +20,6 @@ UnityCourser/
 ├── downloads/                        # Contenido descargado (por curso)
 ├── elpx/                             # Paquetes ELPX generados
 ├── output/                           # Paquetes eXe generados
-├── docs/                             # Documentación adicional
 ├── build_course.sh                   # Script orquestador (recomendado)
 └── README.md
 ```
@@ -34,11 +33,44 @@ UnityCourser/
 
 ### Opción A: Script Orquestador (Recomendado)
 
+**Uso básico:**
+
 ```bash
 ./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials
 ```
 
-Ejecuta los 3 pasos automáticamente. El slug se puede omitir (se genera del nombre del CSV).
+**Ejemplos con opciones:**
+
+```bash
+# Mantener negritas
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --keep-bold
+
+# Copiar assets dentro del paquete
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --copy-assets
+
+# Ambas opciones
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --keep-bold --copy-assets
+
+# Descargar solo primeros 10 items
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --limit 10
+
+# Pausa de 2 segundos entre descargas
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --delay 2
+
+# Timeout de 60 segundos
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --timeout 60
+```
+
+El slug se puede omitir (se genera del nombre del archivo).
+
+**Opciones disponibles:**
+
+| Descarga | Build |
+|----------|-------|
+| `--limit N` | `--keep-bold` |
+| `--delay N` | `--copy-assets` |
+| `--timeout N` | |
+| `--overwrite` | |
 
 ### Opción B: Pasos Individuales
 
@@ -47,7 +79,9 @@ Ejecuta los 3 pasos automáticamente. El slug se puede omitir (se genera del nom
 ```bash
 .venv/bin/python scripts/download_unity_learn.py data/UL_Unity_Essentials_6_0.csv \
   --output-dir downloads/unity_essentials \
-  --download-assets
+  --download-assets \
+  --limit 10 \
+  --delay 2
 ```
 
 #### 2) Refrescar manifest
@@ -63,52 +97,55 @@ Ejecuta los 3 pasos automáticamente. El slug se puede omitir (se genera del nom
 ```bash
 .venv/bin/python scripts/build_exe_web_from_manifest.py \
   --manifest downloads/unity_essentials/manifest.json \
-  --output-dir output/exe_unity_essentials
+  --output-dir output/exe_unity_essentials \
+  --keep-bold \
+  --copy-assets
 ```
 
-## Opciones del Build
+## Opciones Importantes
 
-### Mantener negritas (por defecto se eliminan)
+### Negritas
+
+Por defecto se **eliminan** `<strong>` y `<b>` (mejora traducción automática).
+
+Con `--keep-bold` se mantienen intactas:
 
 ```bash
-.venv/bin/python scripts/build_exe_web_from_manifest.py \
-  --manifest downloads/unity_essentials/manifest.json \
-  --output-dir output/exe_unity_web \
-  --keep-bold
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --keep-bold
 ```
 
-### Copiar assets dentro del paquete
+### Assets
+
+Para copiar assets dentro del paquete eXe:
 
 ```bash
---copy-assets
+./build_course.sh data/UL_Unity_Essentials_6_0.csv unity_essentials --copy-assets
 ```
 
-## Opciones de Descarga
+### Descarga
 
-- `--limit 10` - Descargar solo primeros 10 items
-- `--delay 1.5` - Pausa entre descargas (segundos)
-- `--timeout 45` - Timeout por request
+- `--limit 10` - Solo primeros 10 items (testing)
+- `--delay 2` - Pausa entre descargas
+- `--timeout 60` - Timeout por request
 - `--overwrite` - Reemplazar HTML existentes
 
-## Nota sobre Negritas
+### Notas Técnicas
 
-- **Por defecto**: se eliminan `<strong>` y `<b>` (mejora traducción automática)
-- **Con `--keep-bold`**: se mantienen intactas
-- La template se genera automáticamente si no existe
+- **Template**: Se genera automáticamente si no existe
+- **ZIP**: Se crea automáticamente en `output/`
+- Orden de ejecución: Descarga → Refresco → Build
 
 ## Múltiples Cursos
 
-Con el script orquestador es muy simple:
-
 ```bash
-./build_course.sh data/CURSO_1.csv curso_1
+./build_course.sh data/CURSO_1.csv curso_1 --keep-bold
 ./build_course.sh data/CURSO_2.csv curso_2
 ```
 
 Cada curso genera:
-- `downloads/curso_1/` - Contenido descargado
-- `output/exe_curso_1/` - Paquete eXe
-- `output/exe_curso_1.zip` - ZIP comprimido
+- `downloads/curso_X/` - Contenido descargado
+- `output/exe_curso_X/` - Paquete eXe
+- `output/exe_curso_X.zip` - ZIP comprimido
 
 ## Troubleshooting
 
